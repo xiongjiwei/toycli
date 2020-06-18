@@ -169,16 +169,37 @@ pub struct Args {
     conflict: std::collections::HashSet<String>,
     min_value: usize,
     max_value: usize,
+    default_value: Vec<String>,
+    about: String,
 }
 
 impl Args {
-    pub fn new<S: Into<String>>(name: S) -> Self {
+    pub fn with_name<S: Into<String>>(name: S) -> Self {
         let n = name.into();
         Self {
             name: n.clone(),
             long: string!("--") + n.as_str(),
             ..Default::default()
         }
+    }
+
+    pub fn default_value<S: Into<String>>(mut self, values: Vec<S>) -> Self {
+        if self.min_value != self.max_value {
+            error("cannot assign default value to variable option");
+        }
+
+        if self.min_value != values.len() {
+            error(format!("given value length {} not equal {}", values.len(), self.min_value));
+        }
+        for s in values {
+            self.default_value.push(s.into());
+        }
+        self
+    }
+
+    pub fn about<S: Into<String>>(mut self, about: S) -> Self {
+        self.about = about.into();
+        self
     }
 
     pub fn conflict_with<S: Into<String>>(mut self, conflict: S) -> Self {
@@ -298,6 +319,19 @@ impl SubCommand {
         }
     }
 
+    fn set_default(&self, pr: &mut ParserRet) -> Result<&Self, String> {
+        let ops = pr.options.clone();
+        for op in ops {
+            if op.1.is_empty() {
+                let ref default = self.options.get(op.0.as_str()).unwrap().default_value;
+                if !default.is_empty() {
+                    pr.options.insert(op.0.clone(), default.clone());
+                }
+            }
+        }
+        Ok(self)
+    }
+
     fn map_flag(&self, pr: &mut ParserRet) -> Result<&Self, String> {
         let copy_option = pr.options.clone();
         pr.options.clear();
@@ -378,6 +412,7 @@ impl Cli {
                 self.commands.get(parse.cmd.as_str()).ok_or(string!("no such command"))
             })
             .and_then(|cmd| cmd.map_flag(&mut parse))
+            .and_then(|cmd| cmd.set_default(&mut parse))
             .and_then(|cmd| cmd.verification_arg(&parse))
             .and_then(|cmd| cmd.verification_options(&parse))
             .and_then(|cmd| cmd.build_match(parse))
@@ -470,7 +505,7 @@ mod tests {
     fn test_command_err() {
         let m =
             Cli::new("app")
-                .arg(Args::new("noargs"))
+                .arg(Args::with_name("noargs"))
                 .try_get_matches_from(string_vec!["app", "--onearg", "arg"]);
 
         assert!(m.is_none());
@@ -480,7 +515,7 @@ mod tests {
     fn test_dup_option() {
         let m =
             Cli::new("app")
-                .arg(Args::new("dupargs").short('d'))
+                .arg(Args::with_name("dupargs").short('d'))
                 .try_get_matches_from(string_vec!["app", "--dupargs", "-d"]);
 
         assert!(m.is_none());
@@ -514,27 +549,19 @@ mod tests {
         if let Some(m) = m.sub_command("add") {
             let ref resp = m.args()[0];
             assert_eq!("resp", resp);
-            if let Some(option) = m.value_of("-p") {
-                assert_eq!("path", option[0]);
-            }
-
-            if let Some(option) = m.value_of("-h") {
-                assert_eq!("add help", option[0]);
-            }
+            assert_eq!("path", m.value_of("-p").unwrap()[0]);
+            assert_eq!("add help", m.value_of("-h").unwrap()[0]);
         }
-
-        if let Some(n) = m.value_of("-n") {
-            assert_eq!("namespace", n[0]);
-        }
+        assert_eq!("namespace", m.value_of("-n").unwrap()[0]);
     }
 
     #[test]
     fn test_cli_args() {
         let m =
             Cli::new("app")
-                .arg(Args::new("noargs"))
-                .arg(Args::new("onearg").takes_value())
-                .arg(Args::new("notused").takes_value())
+                .arg(Args::with_name("noargs"))
+                .arg(Args::with_name("onearg").takes_value())
+                .arg(Args::with_name("notused").takes_value())
                 .try_get_matches_from(string_vec!["app", "--noargs", "--onearg", "arg"])
                 .unwrap();
 
@@ -552,8 +579,8 @@ mod tests {
     fn test_short() {
         let m =
             Cli::new("app")
-                .arg(Args::new("noargs").short('n'))
-                .arg(Args::new("onearg").short('o').takes_value())
+                .arg(Args::with_name("noargs").short('n'))
+                .arg(Args::with_name("onearg").short('o').takes_value())
                 .try_get_matches_from(string_vec!["app", "-n", "-o", "arg"])
                 .unwrap();
 
@@ -571,8 +598,8 @@ mod tests {
             Cli::new("app")
                 .subcommand(
                     SubCommand::new("add")
-                        .arg(Args::new("noargs"))
-                        .arg(Args::new("onearg").takes_value())
+                        .arg(Args::with_name("noargs"))
+                        .arg(Args::with_name("onearg").takes_value())
                 )
                 .subcommand(SubCommand::new("copy").takes_value())
                 .try_get_matches_from(string_vec!["app", "add", "--noargs", "--onearg", "arg"])
@@ -605,7 +632,7 @@ mod tests {
     fn test_no_such_option() {
         let m =
             Cli::new("app")
-                .arg(Args::new("version"))
+                .arg(Args::with_name("version"))
                 .try_get_matches_from(string_vec!["app", "-v"]);
 
         assert!(m.is_none());
@@ -615,21 +642,21 @@ mod tests {
     fn test_option_invalid() {
         let m =
             Cli::new("app")
-                .arg(Args::new("version").takes_value().short('v'))
+                .arg(Args::with_name("version").takes_value().short('v'))
                 .try_get_matches_from(string_vec!["app", "-v"]);
 
         assert!(m.is_none());
 
         let m =
             Cli::new("app")
-                .arg(Args::new("version").required())
+                .arg(Args::with_name("version").required())
                 .try_get_matches_from(string_vec!["app", "--help"]);
 
         assert!(m.is_none());
 
         let m =
             Cli::new("app")
-                .arg(Args::new("version").required().value_count(3).short('v'))
+                .arg(Args::with_name("version").required().value_count(3).short('v'))
                 .try_get_matches_from(string_vec!["app", "-v", "arg1", "arg2"]);
 
         assert!(m.is_none());
@@ -639,8 +666,8 @@ mod tests {
     fn test_option_required() {
         let cli =
             Cli::new("app")
-                .arg(Args::new("new").short('n').required())
-                .arg(Args::new("find").short('f'));
+                .arg(Args::with_name("new").short('n').required())
+                .arg(Args::with_name("find").short('f'));
 
         let m = cli.try_get_matches_from(string_vec!["app", "-f"]);
         assert!(m.is_none());
@@ -653,9 +680,9 @@ mod tests {
     fn test_conflict() {
         let cli =
             Cli::new("app")
-                .arg(Args::new("new").short('n').conflict_with("find"))
-                .arg(Args::new("find").short('f'))
-                .arg(Args::new("rm").conflict_with_all(vec!["find", "new"]));
+                .arg(Args::with_name("new").short('n').conflict_with("find"))
+                .arg(Args::with_name("find").short('f'))
+                .arg(Args::with_name("rm").conflict_with_all(vec!["find", "new"]));
 
         let m = cli.try_get_matches_from(string_vec!["app", "-n", "-f"]);
         assert!(m.is_none());
@@ -669,12 +696,39 @@ mod tests {
     }
 
     #[test]
+    fn test_default_value_args() {
+        let cli =
+            Cli::new("app")
+                .arg(Args::with_name("new").takes_value().default_value(vec!["default"]));
+
+        let m = cli.try_get_matches_from(string_vec!["app", "--new"]);
+        assert_eq!("default", m.unwrap().value_of("new").unwrap()[0]);
+
+        let m = cli.try_get_matches_from(string_vec!["app", "--new", "new"]);
+        assert_eq!("new", m.unwrap().value_of("new").unwrap()[0]);
+
+        let cli =
+            Cli::new("app")
+                .arg(
+                    Args::with_name("pack")
+                        .takes_value()
+                        .value_count(2)
+                        .default_value(vec!["default1", "default2"])
+                );
+
+        let m = cli.try_get_matches_from(string_vec!["app", "--pack"]).unwrap();
+        assert!(string_vec!["default1", "default2"].eq(m.value_of("pack").unwrap()));
+        let m = cli.try_get_matches_from(string_vec!["app", "--pack", "1", "2"]).unwrap();
+        assert!(string_vec!["1", "2"].eq(m.value_of("pack").unwrap()));
+    }
+
+    #[test]
     #[should_panic]
     fn test_panic_when_build() {
-        let m =
+        let _m =
             Cli::new("app")
-                .arg(Args::new("noargs").short('n'))
-                .arg(Args::new("onearg").short('n'))
+                .arg(Args::with_name("noargs").short('n'))
+                .arg(Args::with_name("onearg").short('n'))
                 .try_get_matches_from(string_vec!["app", "copy", "arg"])
                 .unwrap();
     }

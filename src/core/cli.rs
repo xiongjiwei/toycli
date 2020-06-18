@@ -193,7 +193,7 @@ impl Args {
         self
     }
 
-    pub fn arg_count(mut self, c: usize) -> Self {
+    pub fn value_count(mut self, c: usize) -> Self {
         self.min_value = c;
         self.max_value = c;
         self
@@ -629,10 +629,43 @@ mod tests {
 
         let m =
             Cli::new("app")
-                .arg(Args::new("version").required().arg_count(3).short('v'))
+                .arg(Args::new("version").required().value_count(3).short('v'))
                 .try_get_matches_from(string_vec!["app", "-v", "arg1", "arg2"]);
 
         assert!(m.is_none());
+    }
+
+    #[test]
+    fn test_option_required() {
+        let cli =
+            Cli::new("app")
+                .arg(Args::new("new").short('n').required())
+                .arg(Args::new("find").short('f'));
+
+        let m = cli.try_get_matches_from(string_vec!["app", "-f"]);
+        assert!(m.is_none());
+
+        let m = cli.try_get_matches_from(string_vec!["app", "-f", "-n"]).unwrap();
+        assert_eq!(0, m.value_of("new").unwrap().len());
+    }
+
+    #[test]
+    fn test_conflict() {
+        let cli =
+            Cli::new("app")
+                .arg(Args::new("new").short('n').conflict_with("find"))
+                .arg(Args::new("find").short('f'))
+                .arg(Args::new("rm").conflict_with_all(vec!["find", "new"]));
+
+        let m = cli.try_get_matches_from(string_vec!["app", "-n", "-f"]);
+        assert!(m.is_none());
+        let m = cli.try_get_matches_from(string_vec!["app", "--rm", "-n"]);
+        assert!(m.is_none());
+        let m = cli.try_get_matches_from(string_vec!["app", "--rm", "-f"]);
+        assert!(m.is_none());
+
+        let m = cli.try_get_matches_from(string_vec!["app", "--rm"]).unwrap();
+        assert_eq!(0, m.value_of("rm").unwrap().len());
     }
 
     #[test]

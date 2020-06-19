@@ -170,6 +170,7 @@ pub struct Args {
     min_value: usize,
     max_value: usize,
     default_value: Vec<String>,
+    value_names: Vec<String>,
     about: String,
 }
 
@@ -183,16 +184,24 @@ impl Args {
         }
     }
 
+    /// set default value for args
+    ///
+    /// **NOTE:** This implicitly sets [`Args::value_count`] to value length
     pub fn default_value<S: Into<String>>(mut self, values: Vec<S>) -> Self {
-        if self.min_value != self.max_value {
-            error("cannot assign default value to variable option");
-        }
-
-        if self.min_value != values.len() {
-            error(format!("given value length {} not equal {}", values.len(), self.min_value));
-        }
+        self = self.value_count(values.len());
         for s in values {
             self.default_value.push(s.into());
+        }
+        self
+    }
+
+    /// set value names for args
+    ///
+    /// **NOTE:** This implicitly sets [`Args::value_count`] to given value length and clear default value
+    pub fn value_names<S: Into<String>>(mut self, names: Vec<S>) -> Self {
+        self = self.value_count(names.len());
+        for name in names {
+            self.value_names.push(name.into());
         }
         self
     }
@@ -214,16 +223,17 @@ impl Args {
         self
     }
 
-    pub fn value_count(mut self, c: usize) -> Self {
-        self.min_value = c;
-        self.max_value = c;
+    /// set `Args` takes [`count`] value and clear default value
+    pub fn value_count(mut self, count: usize) -> Self {
+        self.min_value = count;
+        self.max_value = count;
+        self.default_value.clear();
         self
     }
 
+    /// set `Args` takes 1 value and clear default value
     pub fn takes_value(mut self) -> Self {
-        self.min_value = 1;
-        self.max_value = 1;
-        self
+        self.value_count(1)
     }
 
     pub fn short(mut self, c: char) -> Self {
@@ -236,7 +246,6 @@ impl Args {
         self.required = true;
         self
     }
-
 
     fn test(&self, options: &ParseOptionMap) -> bool {
         if !options.contains_key(self.name.as_str()) {
@@ -721,6 +730,7 @@ mod tests {
         let m = cli.try_get_matches_from(string_vec!["app", "--pack", "1", "2"]).unwrap();
         assert!(string_vec!["1", "2"].eq(m.value_of("pack").unwrap()));
     }
+
 
     #[test]
     #[should_panic]
